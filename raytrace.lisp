@@ -1,3 +1,5 @@
+(ql:quickload 'png)
+
 (defpackage :raytrace
   (:use :common-lisp :png))
 
@@ -8,25 +10,88 @@
 (defparameter *viewplane-distance* 10)
 (defparameter *viewplane-width* 10)
 (defparameter *viewplane-height* 10)
-(defparameter *point-light-intensity* 0.3)
+
+(defun make-point (x y &optional z)
+  (if (null z)
+      (list x y)
+      (list x y z)))
+
+
+(defun make-color (red green blue)
+  (list red green blue))
+
+(defclass ray ()
+  ((origin :initarg :origin
+	   :reader origin)
+   (direction :initarg :direction
+	      :reader direction)))
+
+(defclass scene-object () 
+  ((material
+    :initarg :material
+    :reader material)))
+
+(defclass sphere (scene-object)
+  ((center
+    :initarg :center
+    :reader center)
+   (radius
+    :initarg :radius
+    :reader radius)))
+
+(defclass ray-intersection ()
+  ((time
+    :initarg :intersect-time
+    :reader intersect-time)
+   (point
+    :initarg :point
+    :reader point)
+   (normal
+    :initarg :normal
+    :reader normal)
+   (intersect-object
+    :initarg :intersect-object
+    :reader intersect-object)))
+
+(defclass light ()
+  ((intensity
+    :initarg :intensity
+    :reader intensity)
+   (color
+    :initarg :color
+    :reader color)))
+
+(defclass point-light (light)
+  ((point
+    :initarg :point
+    :reader point)))
+
+(defclass material ()
+    ((color
+      :initarg :color
+      :reader color)))
+
+(defparameter *ambient-light*
+  (make-instance 'light :intensity 0.2 :color (make-color 1.0 1.0 1.0)))
+
+(defparameter *red-material*
+  (make-instance 'material :color (make-color 1.0 0.0 0.0)))
+
+(defparameter *blue-material*
+  (make-instance 'material :color (make-color 0.0 0.0 1.0)))
 
 (defparameter *scene*
   (list
-   (make-instance 'sphere :color (make-color 0 0 255) :center (make-point -15 -10 -105) :radius 30)
-   (make-instance 'sphere :color (make-color 255 0 0) :center (make-point 15 10 -95) :radius 30)
-   ;;(make-instance 'sphere :color (make-color 255 0 0) :center (make-point 10 -5 -75) :radius 10)
-   ))
+   (make-instance 'sphere :material *blue-material* :center (make-point -15 -10 -105) :radius 30)
+   (make-instance 'sphere :material *red-material* :center (make-point 15 10 -95) :radius 30)))
 
-(defparameter *lights*
+(defparameter *point-lights*
   (list
-   (make-point 0 -20 -50)))
+   (make-instance 'point-light :point (make-point 0 -20 -50) :intensity 0.8 :color (make-color 1.0 1.0 1.0))))
 
 (defun curry (function &rest args)
     (lambda (&rest more-args)
       (apply function (append args more-args))))
-
-(defun make-color (red green blue)
-  (list red green blue))
 
 (defun color-red (color)
   (car color))
@@ -36,11 +101,6 @@
 
 (defun color-blue (color)
   (caddr color))
-
-(defun make-point (x y &optional z)
-  (if (null z)
-      (list x y)
-      (list x y z)))
 
 (defun point-x (pt) (car pt))
 (defun point-y (pt) (cadr pt))
@@ -73,16 +133,6 @@
 (defun vector-div-scalar (vec scalar)
   (mapcar (lambda (x) (/ x scalar)) vec) )
 
-(defclass ray ()
-  ((origin :initarg :origin
-	   :reader origin)
-   (direction :initarg :direction
-	      :reader direction)))
-
-(defmethod initialize-instance :after ((ray ray) &key)
-  (setf (slot-value ray 'direction)
-	(normalize (slot-value ray 'direction))))
-
 (defun ray-x (ray) (point-x (origin ray)))
 (defun ray-y (ray) (point-y (origin ray)))
 (defun ray-z (ray) (point-z (origin ray)))
@@ -91,35 +141,11 @@
 (defun ray-j (ray) (point-y (direction ray)))
 (defun ray-k (ray) (point-z (direction ray)))
 
+(defun calc-direction (start end)
+  (normalize (vector-sub end start)))
+
 (defun make-ray-from-points (start end)
-  (make-instance 'ray :origin start :direction (mapcar #'- end start)))
-
-(defclass scene-object () 
-  ((color
-    :initarg :color
-    :reader color)))
-
-(defclass sphere (scene-object)
-  ((center
-    :initarg :center
-    :reader center)
-   (radius
-    :initarg :radius
-    :reader radius)))
-
-(defclass ray-intersection ()
-  ((time
-    :initarg :intersect-time
-    :reader intersect-time)
-   (intersect-point
-    :initarg :intersect-point
-    :reader intersect-point)
-   (normal
-    :initarg :normal
-    :reader normal)
-   (intersect-object
-    :initarg :intersect-object
-    :reader intersect-object)))
+  (make-instance 'ray :origin start :direction (calc-direction start end)))
 
 (defgeneric find-intersection-object (ray object))
 
@@ -145,13 +171,13 @@
 	(let* ((t1 (/ (+ (- b) (sqrt det)) (* 2 a)))
 	       (t2 (/ (- (- b) (sqrt det)) (* 2 a)))
 	       (time (min t1 t2))
-	       (intersect-point (vector-add (origin ray)
-					    (vector-mult-scalar (direction ray) time)))
+	       (point (vector-add (origin ray)
+				  (vector-mult-scalar (direction ray) time)))
 	       (normal (vector-div-scalar (vector-sub (origin ray) (center object))
 					  radius)))
 	  (make-instance 'ray-intersection
 			 :intersect-time time
-			 :intersect-point intersect-point
+			 :point point
 			 :normal normal
 			 :intersect-object object)))))
 
@@ -165,35 +191,45 @@
 	   best-int))) 
    *scene* :initial-value nil))
 
-(defun set-pixel (img pt color)
-  (setf (aref img (point-y pt) (point-x pt) 0) (max 0 (min 255 (round (color-red color)))))
-  (setf (aref img (point-y pt) (point-x pt) 1) (max 0 (min 255 (round (color-green color)))))
-  (setf (aref img (point-y pt) (point-x pt) 2) (max 0 (min 255 (round (color-blue color))))))
+(defgeneric calculate-color (material inters))
 
-(defun calculate-light-intensity (inters light)
-  (let* ((to-light (make-ray-from-points (intersect-point inters)
-					 light))
+(defgeneric get-ambient-component (material inters))
+
+(defgeneric get-point-light-component (material inters light))
+
+(defmethod get-ambient-component ((mat material) inters)
+  (vector-mult-scalar (color mat) (intensity *ambient-light*)))
+
+(defmethod get-point-light-component ((mat material) inters (light point-light))
+  (let* ((light-dir (calc-direction (point inters) (point light)))
 	 (normal (normal inters))
-	 (light-dir (direction to-light))
-	 (intensity  (* (dot-product light-dir normal)
-			*point-light-intensity*))
-	 (color (color (intersect-object inters))))
-    (mapcar (lambda (comp) (* comp intensity)) color)))
+	 (intensity (* (dot-product light-dir normal)
+		       (intensity light))))
+    (mapcar (lambda (comp) (* comp intensity)) (color mat))))
 
-(defun calculate-intensity (inters)
+(defmethod calculate-color ((mat material) inters)
   ;; for each light source
-  (apply #'vector-add
-	 (mapcar (curry #'calculate-light-intensity inters) *lights*)))
+  (vector-add (get-ambient-component mat inters)
+	      (apply #'vector-add
+		     (mapcar (lambda (light) (get-point-light-component mat inters light))
+			     *point-lights*)))) 
+
+(defun color-to-256 (comp)
+  (round (* 255 (max 0 (min 1 comp)))))
+
+(defun set-pixel (img pt color)
+  (setf (aref img (point-y pt) (point-x pt) 0) (color-to-256 (color-red color)))
+  (setf (aref img (point-y pt) (point-x pt) 1) (color-to-256 (color-green color)))
+  (setf (aref img (point-y pt) (point-x pt) 2) (color-to-256 (color-blue color))))
 
 (defun shoot-ray (ray)
   (let ((inters (find-intersection ray)))
     (if inters
-	(calculate-intensity inters)
+	(calculate-color (material (intersect-object inters)) inters)
 	(make-color 0 0 0))))
 
 (defun raytrace (output-pathname)
-  (let
-      ((img (png:make-image *image-height* *image-width* 3 8)))
+  (let ((img (png:make-image *image-height* *image-width* 3 8)))
     (dotimes (x *image-width*)
       (dotimes (y *image-height*)	
 	(let* ((viewplane-x (- (/ (* x *viewplane-width*) *image-width*) (/ *viewplane-width* 2)))
@@ -201,10 +237,10 @@
 	       (ray (make-ray-from-points 
 		     (make-point 0 0 0) 
 		     (make-point viewplane-x viewplane-y (- *viewplane-distance*))))
-	       (color (shoot-ray ray)))
+	       (point-color (shoot-ray ray)))
 	  (set-pixel img
 		     (make-point x y)
-		     color))))        
+		     point-color))))        
     (with-open-file (output output-pathname :element-type '(unsigned-byte 8)
      			    :direction :output :if-exists :supersede)
       (png:encode img output))))
