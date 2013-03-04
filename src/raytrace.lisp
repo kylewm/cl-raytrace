@@ -1,13 +1,14 @@
 (in-package :raytrace)
 
-(defparameter *image-width* 200)
-(defparameter *image-height* 200)
+(defparameter *image-width* 400)
+(defparameter *image-height* 400)
 (defparameter *viewplane-distance* 10)
 (defparameter *viewplane-width* 10)
 (defparameter *viewplane-height* 10)
 (defparameter *black* (make-color 0 0 0))
 (defparameter *white* (make-color 1 1 1))
 (defparameter *eye* (make-point 0 0 0))
+(defparameter *use-supersample* nil)
 
 (defgeneric find-intersection-object (ray object))
 
@@ -48,8 +49,8 @@
    (lambda (best-int obj) 
      (let ((obj-int (find-intersection-object ray obj)))
        (cond ((null obj-int) best-int)
-	     ;; small epsilon allows us to skip intersections in the
-             ;; opposite direction of the vector without interpreting ourself as a shadow
+	     ;; small epsilon allows us to cull intersections in the
+             ;; opposite direction of the vector
 	     ((< (intersect-time obj-int) -0.01) best-int)
 	     ((null best-int) obj-int)
 	     ((< (intersect-time obj-int)
@@ -58,7 +59,9 @@
    *scene* :initial-value nil))
 
 (defun in-shadow (light-ray)
-  (find-intersection light-ray))
+  (let ((inters
+	 (find-intersection light-ray)))
+    (and inters (> (intersect-time inters) 0.01))))
 
 (defun get-ambient-component (ray mat inters)
   (vector-mult-scalar (color mat) (intensity *ambient-light*)))
@@ -117,21 +120,43 @@
 	    *black*))
       *black*))
 
+
+(defun sample (view-point)
+  (let* ((dir (calc-direction *eye* view-point) )
+	 (ray (make-instance 'ray :origin *eye* :direction dir :attenuation 1.0)))
+    (shoot-ray ray 2)))
+
+(defun supersample (view-points)
+  (vector-avg
+   (mapcar #'sample view-points)))
+
+(defun supersample-points (x y z px-width px-height)
+  (let ((w (/ px-width 2))
+	(h (/ px-height 2)))
+    (list (make-point (- x w) (- y h) z)
+	  (make-point (- x w) y       z)
+	  (make-point (- x w) (+ y h) z)
+	  (make-point x       (- y h) z)
+	  (make-point x       y       z)
+	  (make-point x       (+ y h) z)
+	  (make-point (+ x w) (- y h) z)
+	  (make-point (+ x w) y       z)
+	  (make-point (+ x w) (+ y h) z))))
+
 (defun raytrace (output-pathname)
-  (let ((img (png:make-image *image-height* *image-width* 3 8)))
+  (let ((img (png:make-image *image-height* *image-width* 3 8))
+	(pixel-width (/ *viewplane-width* *image-width*))
+	(pixel-height (/ *viewplane-height* *image-height*)))
     (dotimes (x *image-width*)
-      (dotimes (y *image-height*)	
+      (dotimes (y *image-height*)
 	(let* ((viewplane-x (- (/ (* x *viewplane-width*) *image-width*) (/ *viewplane-width* 2)))
 	       (viewplane-y (- (/ (* y *viewplane-height*) *image-height*) (/ *viewplane-height* 2)))
-	       (ray (make-instance
-		     'ray
-		     :origin
-		     *eye*
-		     :direction
-		     (calc-direction *eye*
-				     (make-point viewplane-x viewplane-y (- *viewplane-distance*)))
-		     :attenuation 1.0))
-	       (point-color (shoot-ray ray 2)))
+	       (point-color (if *use-supersample*
+				(supersample (supersample-points viewplane-x viewplane-y
+								 (- *viewplane-distance*)
+								 pixel-width pixel-height))
+				(sample (make-point viewplane-x viewplane-y
+						    (- *viewplane-distance*))))))
 	  (set-pixel img
 		     (make-point x y)
 		     point-color))))        

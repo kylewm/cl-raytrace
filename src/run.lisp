@@ -2,17 +2,17 @@
 
 (defparameter *ambient-light*
   (make-instance 'light
-		 :intensity 0
+		 :intensity 0.2
 		 :color (make-color 1.0 1.0 1.0)))
 
 (defparameter *point-lights*
   (list
    (make-instance 'point-light 
-		  :point (make-point -30 100 0) 
-		  :intensity 1.0
+		  :point (make-point -200 -50 0) 
+		  :intensity 0.8
 		  :color (make-color 1 1 1))
    (make-instance 'point-light 
-		  :point (make-point 30 -100 0) 
+		  :point (make-point 0 -100 0) 
 		  :intensity 0.5
 		  :color (make-color 1 1 1))))
 
@@ -22,7 +22,7 @@
 		 :diffuse-factor 0.8
 		 :specular-factor 0.5
 		 :specular-n 32
-		 :reflectivity 1.0))
+		 :reflectivity 0.3))
 
 (defparameter *blue-material*
   (make-instance 'material

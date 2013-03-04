@@ -57,3 +57,7 @@
 
 (defun calc-direction (start end)
   (normalize (vector-sub end start)))
+
+(defun vector-avg (vecs)
+  (vector-div-scalar 
+   (apply #'vector-add vecs) (length vecs)))
