@@ -72,22 +72,27 @@
       :reader color)))
 
 (defparameter *ambient-light*
-  (make-instance 'light :intensity 0.2 :color (make-color 1.0 1.0 1.0)))
+  (make-instance 'light :intensity 0.1 :color (make-color 1.0 1.0 1.0)))
 
 (defparameter *red-material*
-  (make-instance 'material :color (make-color 1.0 0.0 0.0)))
+  (make-instance 'material :color (make-color 1 0 0)))
 
 (defparameter *blue-material*
-  (make-instance 'material :color (make-color 0.0 0.0 1.0)))
+  (make-instance 'material :color (make-color 0 0 1)))
+
+(defparameter *green-material*
+  (make-instance 'material :color (make-color 0 1 0)))
 
 (defparameter *scene*
   (list
-   (make-instance 'sphere :material *blue-material* :center (make-point -15 -10 -105) :radius 30)
-   (make-instance 'sphere :material *red-material* :center (make-point 15 10 -95) :radius 30)))
+   (make-instance 'sphere :material *blue-material* :center (make-point -20 20 -100) :radius 20)
+   (make-instance 'sphere :material *green-material* :center (make-point 0 -5 -125) :radius 20)
+   (make-instance 'sphere :material *red-material* :center (make-point 20 -30 -150) :radius 20)
+))
 
 (defparameter *point-lights*
   (list
-   (make-instance 'point-light :point (make-point 0 -20 -50) :intensity 0.8 :color (make-color 1.0 1.0 1.0))))
+   (make-instance 'point-light :point (make-point -100 0 0) :intensity 1 :color (make-color 1 1 1))))
 
 (defun curry (function &rest args)
     (lambda (&rest more-args)
@@ -173,7 +178,7 @@
 	       (time (min t1 t2))
 	       (point (vector-add (origin ray)
 				  (vector-mult-scalar (direction ray) time)))
-	       (normal (vector-div-scalar (vector-sub (origin ray) (center object))
+	       (normal (vector-div-scalar (vector-sub point (center object))
 					  radius)))
 	  (make-instance 'ray-intersection
 			 :intersect-time time
@@ -185,11 +190,17 @@
   (reduce 
    (lambda (best-int obj) 
      (let ((obj-int (find-intersection-object ray obj)))
-       (if (or (null best-int)
-	       (and obj-int (< (intersect-time obj-int) (intersect-time best-int))))
-	   obj-int
-	   best-int))) 
+
+       (cond ((null obj-int) best-int)
+	     ((< (intersect-time obj-int) 0.01) best-int)
+	     ((null best-int) obj-int)
+	     ((< (intersect-time obj-int)
+		 (intersect-time best-int)) obj-int)
+	     (t best-int)))) 
    *scene* :initial-value nil))
+
+(defun in-shadow (light-ray)
+  (find-intersection light-ray))
 
 (defgeneric calculate-color (material inters))
 
@@ -201,11 +212,13 @@
   (vector-mult-scalar (color mat) (intensity *ambient-light*)))
 
 (defmethod get-point-light-component ((mat material) inters (light point-light))
-  (let* ((light-dir (calc-direction (point inters) (point light)))
-	 (normal (normal inters))
-	 (intensity (* (dot-product light-dir normal)
-		       (intensity light))))
-    (mapcar (lambda (comp) (* comp intensity)) (color mat))))
+  (let* ((light-ray (make-ray-from-points (point inters) (point light)))
+	 (light-dir (direction light-ray))
+	 (dot-prod (dot-product light-dir (normal inters)))
+	 (intensity (* dot-prod (intensity light))))
+    (if (and (> dot-prod 0) (not (in-shadow light-ray)))
+	(mapcar (lambda (comp) (* comp intensity)) (color mat))
+	(make-color 0 0 0))))
 
 (defmethod calculate-color ((mat material) inters)
   ;; for each light source
@@ -235,7 +248,7 @@
 	(let* ((viewplane-x (- (/ (* x *viewplane-width*) *image-width*) (/ *viewplane-width* 2)))
 	       (viewplane-y (- (/ (* y *viewplane-height*) *image-height*) (/ *viewplane-height* 2)))
 	       (ray (make-ray-from-points 
-		     (make-point 0 0 0) 
+		     (make-point 0.0 0.0 0.0) 
 		     (make-point viewplane-x viewplane-y (- *viewplane-distance*))))
 	       (point-color (shoot-ray ray)))
 	  (set-pixel img
