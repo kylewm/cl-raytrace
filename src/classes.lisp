@@ -1,10 +1,15 @@
 (in-package :raytrace)
 
 (defclass ray ()
-  ((origin :initarg :origin
-	   :reader origin)
-   (direction :initarg :direction
-	      :reader direction)))
+  ((origin
+    :initarg :origin
+    :reader origin)
+   (direction
+    :initarg :direction
+    :reader direction)
+   (attenuation
+    :initarg :attenuation
+    :reader attenuation)))
 
 (defun make-ray-from-points (start end)
   (make-instance 'ray :origin start :direction (calc-direction start end)))
@@ -58,15 +63,18 @@
     :reader point)))
 
 (defclass material ()
-    ((color
-      :initarg :color
-      :reader color)
-     (diffuse-factor
-      :initarg :diffuse-factor
-      :reader diffuse-factor)
-     (specular-factor
-      :initarg :specular-factor
-      :reader specular-factor)
-     (specular-n
-      :initarg :specular-n
-      :reader specular-n)))
+  ((color
+    :initarg :color
+    :reader color)
+   (diffuse-factor
+    :initarg :diffuse-factor
+    :reader diffuse-factor)
+   (specular-factor
+    :initarg :specular-factor
+    :reader specular-factor)
+   (specular-n
+    :initarg :specular-n
+    :reader specular-n)
+   (reflectivity
+    :initarg :reflectivity
+    :reader reflectivity)))

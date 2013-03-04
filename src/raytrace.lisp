@@ -1,7 +1,7 @@
 (in-package :raytrace)
 
-(defparameter *image-width* 400)
-(defparameter *image-height* 400)
+(defparameter *image-width* 200)
+(defparameter *image-height* 200)
 (defparameter *viewplane-distance* 10)
 (defparameter *viewplane-width* 10)
 (defparameter *viewplane-height* 10)
@@ -47,9 +47,10 @@
   (reduce 
    (lambda (best-int obj) 
      (let ((obj-int (find-intersection-object ray obj)))
-
        (cond ((null obj-int) best-int)
-	     ((< (intersect-time obj-int) 0.01) best-int)
+	     ;; small epsilon allows us to skip intersections in the
+             ;; opposite direction of the vector without interpreting ourself as a shadow
+	     ((< (intersect-time obj-int) -0.01) best-int)
 	     ((null best-int) obj-int)
 	     ((< (intersect-time obj-int)
 		 (intersect-time best-int)) obj-int)
@@ -59,48 +60,62 @@
 (defun in-shadow (light-ray)
   (find-intersection light-ray))
 
-(defgeneric calculate-color (ray material inters))
-
-(defgeneric get-ambient-component (ray material inters))
-
-(defgeneric get-point-light-component (ray material inters light))
-
-(defmethod get-ambient-component (ray (mat material) inters)
+(defun get-ambient-component (ray mat inters)
   (vector-mult-scalar (color mat) (intensity *ambient-light*)))
 
-(defmethod get-point-light-component (ray (mat material) inters (light point-light))
+(defun get-point-light-component (ray mat inters light)
   (let* ((light-ray (make-ray-from-points (point inters) (point light)))
 	 (light-dir (direction light-ray))
 	 (view-dir (vector-mult-scalar (direction ray) -1))
-	 (half-dir (vector-div-scalar (vector-add light-dir view-dir) 2))
+	 (half-dir (normalize (vector-add light-dir view-dir)))
 	 (ln-dot-prod (dot-product light-dir (normal inters)))
 	 (nh-dot-prod (dot-product (normal inters) half-dir))
 	 (diffuse-component (* (diffuse-factor mat) ln-dot-prod))
 	 (specular-component (* (specular-factor mat) (expt nh-dot-prod (specular-n mat)))))
-    (if (not (in-shadow light-ray))
+    (if (in-shadow light-ray)
+	*black*
 	(vector-add 
 	 (vector-mult-scalar (color mat) (intensity light) diffuse-component)
-	 (vector-mult-scalar *white* (intensity light) specular-component))
+	 (vector-mult-scalar *white* (intensity light) specular-component)))))
 
-	*black*)))
-
-(defmethod calculate-color (ray (mat material) inters)
-  ;; for each light source
-  (vector-add (get-ambient-component ray mat inters)
-	      (apply #'vector-add
-		     (mapcar (lambda (light) (get-point-light-component ray mat inters light))
-			     *point-lights*)))) 
+(defun calc-color (ray mat inters)
+  (let ((ambient-component (get-ambient-component ray mat inters))
+	;; for each light source
+	(local-components 
+	 (mapcar (curry #'get-point-light-component ray mat inters) *point-lights*)))
+    (vector-mult-scalar 
+     (reduce #'vector-add (cons ambient-component local-components))
+     (attenuation ray)))) 
 
 (defun set-pixel (img pt color)
   (setf (aref img (point-y pt) (point-x pt) 0) (color-to-256 (color-red color)))
   (setf (aref img (point-y pt) (point-x pt) 1) (color-to-256 (color-green color)))
   (setf (aref img (point-y pt) (point-x pt) 2) (color-to-256 (color-blue color))))
 
-(defun shoot-ray (ray)
-  (let ((inters (find-intersection ray)))
-    (if inters
-	(calculate-color ray (material (intersect-object inters)) inters)
-	(make-color 0 0 0))))
+(defun reflect-ray (ray mat inters)
+  (let* ((view-dir (vector-mult-scalar (direction ray) -1))
+	 (normal-dir (normal inters))
+	 (reflect-dir 
+	  (vector-sub (vector-mult-scalar normal-dir
+					  (* 2 (dot-product normal-dir view-dir)))
+		      view-dir)))
+    (make-instance
+     'ray
+     :origin (point inters)
+     :direction reflect-dir
+     :attenuation (* (attenuation ray) (reflectivity mat)))))
+
+(defun shoot-ray (ray depth)
+  (if (>= depth 0)
+      (let ((inters (find-intersection ray)))
+	(if inters
+	    (let* ((mat (material (intersect-object inters)))
+		   (local (calc-color ray mat inters))
+		   (reflect-ray (reflect-ray ray mat inters))
+		   (reflected (shoot-ray reflect-ray (- depth 1))))
+	      (vector-add local reflected))
+	    *black*))
+      *black*))
 
 (defun raytrace (output-pathname)
   (let ((img (png:make-image *image-height* *image-width* 3 8)))
@@ -108,10 +123,15 @@
       (dotimes (y *image-height*)	
 	(let* ((viewplane-x (- (/ (* x *viewplane-width*) *image-width*) (/ *viewplane-width* 2)))
 	       (viewplane-y (- (/ (* y *viewplane-height*) *image-height*) (/ *viewplane-height* 2)))
-	       (ray (make-ray-from-points
+	       (ray (make-instance
+		     'ray
+		     :origin
 		     *eye*
-		     (make-point viewplane-x viewplane-y (- *viewplane-distance*))))
-	       (point-color (shoot-ray ray)))
+		     :direction
+		     (calc-direction *eye*
+				     (make-point viewplane-x viewplane-y (- *viewplane-distance*)))
+		     :attenuation 1.0))
+	       (point-color (shoot-ray ray 2)))
 	  (set-pixel img
 		     (make-point x y)
 		     point-color))))        
