@@ -69,30 +69,46 @@
 (defclass material ()
     ((color
       :initarg :color
-      :reader color)))
+      :reader color)
+     (diffuse-factor
+      :initarg :diffuse-factor
+      :reader diffuse-factor)
+     (specular-factor
+      :initarg :specular-factor
+      :reader specular-factor)
+     (specular-n
+      :initarg :specular-n
+      :reader specular-n)))
+
+(defparameter *black* (make-color 0 0 0))
+
+(defparameter *white* (make-color 1 1 1))
+
+(defparameter *eye* (make-point 0 0 0))
 
 (defparameter *ambient-light*
-  (make-instance 'light :intensity 0.1 :color (make-color 1.0 1.0 1.0)))
+  (make-instance 'light :intensity 0.2 :color (make-color 1.0 1.0 1.0)))
+
+(defparameter *point-lights*
+  (list
+   (make-instance 'point-light :point (make-point -100 -20 0) :intensity 0.8 :color (make-color 1 1 1))
+   (make-instance 'point-light :point (make-point 30 -100 0) :intensity 0.5 :color (make-color 1 1 1))))
 
 (defparameter *red-material*
-  (make-instance 'material :color (make-color 1 0 0)))
+  (make-instance 'material :color (make-color 1 0 0) :diffuse-factor 0.4 :specular-factor 0.6 :specular-n 8))
 
 (defparameter *blue-material*
-  (make-instance 'material :color (make-color 0 0 1)))
+  (make-instance 'material :color (make-color 0 0 1) :diffuse-factor 0.4 :specular-factor 0.6 :specular-n 8))
 
 (defparameter *green-material*
-  (make-instance 'material :color (make-color 0 1 0)))
+  (make-instance 'material :color (make-color 0 1 0) :diffuse-factor 0.6 :specular-factor 0.4 :specular-n 8))
 
 (defparameter *scene*
   (list
    (make-instance 'sphere :material *blue-material* :center (make-point -20 20 -100) :radius 20)
    (make-instance 'sphere :material *green-material* :center (make-point 0 -5 -125) :radius 20)
-   (make-instance 'sphere :material *red-material* :center (make-point 20 -30 -150) :radius 20)
-))
+   (make-instance 'sphere :material *red-material* :center (make-point 20 -30 -150) :radius 20)))
 
-(defparameter *point-lights*
-  (list
-   (make-instance 'point-light :point (make-point -100 0 0) :intensity 1 :color (make-color 1 1 1))))
 
 (defun curry (function &rest args)
     (lambda (&rest more-args)
@@ -132,8 +148,8 @@
 (defun vector-sub (&rest vectors)
   (apply #'mapcar #'- vectors))
 
-(defun vector-mult-scalar (vec scalar)
-  (mapcar (lambda (x) (* x scalar)) vec))
+(defun vector-mult-scalar (vec &rest scalars)
+  (mapcar (lambda (x) (apply #'* x scalars)) vec))
 
 (defun vector-div-scalar (vec scalar)
   (mapcar (lambda (x) (/ x scalar)) vec) )
@@ -202,29 +218,36 @@
 (defun in-shadow (light-ray)
   (find-intersection light-ray))
 
-(defgeneric calculate-color (material inters))
+(defgeneric calculate-color (ray material inters))
 
-(defgeneric get-ambient-component (material inters))
+(defgeneric get-ambient-component (ray material inters))
 
-(defgeneric get-point-light-component (material inters light))
+(defgeneric get-point-light-component (ray material inters light))
 
-(defmethod get-ambient-component ((mat material) inters)
+(defmethod get-ambient-component (ray (mat material) inters)
   (vector-mult-scalar (color mat) (intensity *ambient-light*)))
 
-(defmethod get-point-light-component ((mat material) inters (light point-light))
+(defmethod get-point-light-component (ray (mat material) inters (light point-light))
   (let* ((light-ray (make-ray-from-points (point inters) (point light)))
 	 (light-dir (direction light-ray))
-	 (dot-prod (dot-product light-dir (normal inters)))
-	 (intensity (* dot-prod (intensity light))))
-    (if (and (> dot-prod 0) (not (in-shadow light-ray)))
-	(mapcar (lambda (comp) (* comp intensity)) (color mat))
-	(make-color 0 0 0))))
+	 (view-dir (vector-mult-scalar (direction ray) -1))
+	 (half-dir (vector-div-scalar (vector-add light-dir view-dir) 2))
+	 (ln-dot-prod (dot-product light-dir (normal inters)))
+	 (nh-dot-prod (dot-product (normal inters) half-dir))
+	 (diffuse-component (* (diffuse-factor mat) ln-dot-prod))
+	 (specular-component (* (specular-factor mat) (expt nh-dot-prod (specular-n mat)))))
+    (if (not (in-shadow light-ray))
+	(vector-add 
+	 (vector-mult-scalar (color mat) (intensity light) diffuse-component)
+	 (vector-mult-scalar *white* (intensity light) specular-component))
 
-(defmethod calculate-color ((mat material) inters)
+	*black*)))
+
+(defmethod calculate-color (ray (mat material) inters)
   ;; for each light source
-  (vector-add (get-ambient-component mat inters)
+  (vector-add (get-ambient-component ray mat inters)
 	      (apply #'vector-add
-		     (mapcar (lambda (light) (get-point-light-component mat inters light))
+		     (mapcar (lambda (light) (get-point-light-component ray mat inters light))
 			     *point-lights*)))) 
 
 (defun color-to-256 (comp)
@@ -238,7 +261,7 @@
 (defun shoot-ray (ray)
   (let ((inters (find-intersection ray)))
     (if inters
-	(calculate-color (material (intersect-object inters)) inters)
+	(calculate-color ray (material (intersect-object inters)) inters)
 	(make-color 0 0 0))))
 
 (defun raytrace (output-pathname)
@@ -247,8 +270,8 @@
       (dotimes (y *image-height*)	
 	(let* ((viewplane-x (- (/ (* x *viewplane-width*) *image-width*) (/ *viewplane-width* 2)))
 	       (viewplane-y (- (/ (* y *viewplane-height*) *image-height*) (/ *viewplane-height* 2)))
-	       (ray (make-ray-from-points 
-		     (make-point 0.0 0.0 0.0) 
+	       (ray (make-ray-from-points
+		     *eye*
 		     (make-point viewplane-x viewplane-y (- *viewplane-distance*))))
 	       (point-color (shoot-ray ray)))
 	  (set-pixel img
