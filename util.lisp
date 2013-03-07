@@ -61,3 +61,6 @@
 (defun vector-avg (vecs)
   (vector-div-scalar 
    (apply #'vector-add vecs) (length vecs)))
+
+(defun vector-negate (vec)
+  (vector-mult-scalar vec -1))

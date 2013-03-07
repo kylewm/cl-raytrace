@@ -51,7 +51,7 @@
        (cond ((null obj-int) best-int)
 	     ;; small epsilon allows us to cull intersections in the
              ;; opposite direction of the vector
-	     ((< (intersect-time obj-int) -0.01) best-int)
+	     ((< (intersect-time obj-int) 0.01) best-int)
 	     ((null best-int) obj-int)
 	     ((< (intersect-time obj-int)
 		 (intersect-time best-int)) obj-int)
@@ -96,11 +96,11 @@
   (setf (aref img (point-y pt) (point-x pt) 2) (color-to-256 (color-blue color))))
 
 (defun reflect-ray (ray mat inters)
-  (let* ((view-dir (vector-mult-scalar (direction ray) -1))
+  (let* ((view-dir (look-direction ray))
 	 (normal-dir (normal inters))
+	 (nl-dot-prod (dot-product normal-dir view-dir))
 	 (reflect-dir 
-	  (vector-sub (vector-mult-scalar normal-dir
-					  (* 2 (dot-product normal-dir view-dir)))
+	  (vector-sub (vector-mult-scalar normal-dir (* 2 nl-dot-prod))
 		      view-dir)))
     (make-instance
      'ray
@@ -108,15 +108,44 @@
      :direction reflect-dir
      :attenuation (* (attenuation ray) (reflectivity mat)))))
 
+(defun refract-ray (ray mat inters)
+  (let* ((mu (/ (refraction-index ray) (refraction-index mat)))
+	 (cos-theta-i (dot-product (normal inters) (look-direction ray)))
+	 (sin-theta-i (sqrt (- 1 (* cos-theta-i cos-theta-i))))
+	 (sin-theta-t (* mu sin-theta-i)))
+    (when (< (* sin-theta-t sin-theta-t) 1)
+      (let* ((cos-theta-t (sqrt (- 1 (* sin-theta-t sin-theta-t))))
+	     (transmitted (vector-sub (vector-mult-scalar (direction ray) mu)
+				      (vector-mult-scalar (normal inters) (* mu (+ cos-theta-i cos-theta-t))))))
+	
+	(make-instance
+	 'ray
+	 :origin (point inters)
+	 :direction transmitted
+	 :attenuation (* (attenuation ray) (transparency mat))
+	 :refraction-index (refraction-index mat))))))
+
 (defun shoot-ray (ray depth)
   (if (>= depth 0)
       (let ((inters (find-intersection ray)))
 	(if inters
 	    (let* ((mat (material (intersect-object inters)))
 		   (local (calc-color ray mat inters))
-		   (reflect-ray (reflect-ray ray mat inters))
-		   (reflected (shoot-ray reflect-ray (- depth 1))))
-	      (vector-add local reflected))
+		   (global-reflected
+		    (if (> (reflectivity mat) 0)
+			(let ((reflected-ray (reflect-ray ray mat inters)))
+			  (if reflected-ray 
+			      (shoot-ray reflected-ray (- depth 1))
+			      *black*))
+			*black*))
+		   (global-refracted
+		    (if (> (transparency mat) 0)
+			(let ((refracted-ray (refract-ray ray mat inters)))
+			  (if refracted-ray
+			      (shoot-ray refracted-ray (- depth 1))
+			      *black*))
+			*black*)))
+	      (vector-add local global-reflected global-refracted))
 	    *black*))
       *black*))
 

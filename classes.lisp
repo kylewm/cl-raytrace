@@ -9,7 +9,11 @@
     :reader direction)
    (attenuation
     :initarg :attenuation
-    :reader attenuation)))
+    :reader attenuation)
+   (refraction-index
+    :initarg :refraction-index
+    :initform 1.0
+    :reader refraction-index)))
 
 (defun make-ray-from-points (start end)
   (make-instance 'ray :origin start :direction (calc-direction start end)))
@@ -21,6 +25,9 @@
 (defun ray-i (ray) (point-x (direction ray)))
 (defun ray-j (ray) (point-y (direction ray)))
 (defun ray-k (ray) (point-z (direction ray)))
+
+(defmethod look-direction ((ray ray))
+  (vector-negate (direction ray)))
 
 (defclass scene-object () 
   ((material
@@ -77,4 +84,12 @@
     :reader specular-n)
    (reflectivity
     :initarg :reflectivity
-    :reader reflectivity)))
+    :reader reflectivity)
+   (transparency
+    :initarg :transparency
+    :initform 0.0
+    :reader transparency)
+   (refraction-index
+    :initarg :refraction-index
+    :initform 1.0
+    :reader refraction-index)))

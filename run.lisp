@@ -27,10 +27,12 @@
 (defparameter *blue-material*
   (make-instance 'material
 		 :color (make-color 0.1 0.2 0.8)
-		 :diffuse-factor 0.8
-		 :specular-factor 0.8
+		 :diffuse-factor 0
+		 :specular-factor 0
 		 :specular-n 32
-		 :reflectivity 0.3))
+		 :reflectivity 0
+		 :transparency 1
+		 :refraction-index 1.0))
 
 (defparameter *green-material*
   (make-instance 'material
@@ -55,5 +57,7 @@
 		  :center (make-point 20 10 -100)
 		  :radius 20)))
 
-(raytrace "test.png")
-(sb-ext:run-program "/usr/bin/ristretto" (list "test.png"))
+(defun main ()
+  (raytrace "test.png"))
+;;(sb-ext:run-program "/usr/bin/ristretto" (list "test.png"))
+
