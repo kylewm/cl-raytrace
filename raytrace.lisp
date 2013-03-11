@@ -1,18 +1,28 @@
 (in-package :raytrace)
 
-(defparameter *image-width* 400)
-(defparameter *image-height* 400)
-(defparameter *viewplane-distance* 10)
-(defparameter *viewplane-width* 10)
-(defparameter *viewplane-height* 10)
-(defparameter *black* (make-color 0 0 0))
-(defparameter *white* (make-color 1 1 1))
-(defparameter *eye* (make-point 0 0 0))
-(defparameter *use-supersample* nil)
+(defgeneric find-intersections-object (ray object))
 
-(defgeneric find-intersection-object (ray object))
+(defun make-ray-intersection (ray time point normal object)
+  (make-instance 'ray-intersection
+		 :intersect-time time
+		 :point point
+		 :normal normal
+		 :intersect-object object
+		 :direction (if (< (dot-product (direction ray) normal) 0)
+				'entering 
+				'leaving)))
 
-(defmethod find-intersection-object (ray (object sphere))
+(defun make-ray-sphere-intersection (ray time sphere)
+  (let* ((point (vector-add (origin ray) (vector-mult-scalar (direction ray) time)))
+	 (normal (vector-div-scalar (vector-sub point (center sphere))
+				    (radius sphere)))
+	 (normal-corrected
+	  (if (< (dot-product (direction ray) normal) 0)
+	      normal
+	      (vector-negate normal))))
+    (make-ray-intersection ray time point normal-corrected sphere)))
+
+(defmethod find-intersections-object (ray (object sphere))
     (let* ((radius (radius object))
 	   (sphere-l (point-x (center object)))
 	   (sphere-m (point-y (center object)))
@@ -31,37 +41,34 @@
       
     (if (< det 0)
 	nil
-	(let* ((t1 (/ (+ (- b) (sqrt det)) (* 2 a)))
-	       (t2 (/ (- (- b) (sqrt det)) (* 2 a)))
-	       (time (min t1 t2))
-	       (point (vector-add (origin ray)
-				  (vector-mult-scalar (direction ray) time)))
-	       (normal (vector-div-scalar (vector-sub point (center object))
-					  radius)))
-	  (make-instance 'ray-intersection
-			 :intersect-time time
-			 :point point
-			 :normal normal
-			 :intersect-object object)))))
+	(let ((t1 (/ (+ (- b) (sqrt det)) (* 2 a)))
+	      (t2 (/ (- (- b) (sqrt det)) (* 2 a))))
+	  (list (make-ray-sphere-intersection ray t1 object)
+		(make-ray-sphere-intersection ray t2 object))))))
 
 (defun find-intersection (ray)
-  (reduce 
-   (lambda (best-int obj) 
-     (let ((obj-int (find-intersection-object ray obj)))
-       (cond ((null obj-int) best-int)
-	     ;; small epsilon allows us to cull intersections in the
-             ;; opposite direction of the vector
-	     ((< (intersect-time obj-int) 0.01) best-int)
-	     ((null best-int) obj-int)
-	     ((< (intersect-time obj-int)
-		 (intersect-time best-int)) obj-int)
-	     (t best-int)))) 
-   *scene* :initial-value nil))
+  (let* ((intersections (flatmap 
+			(curry #'find-intersections-object ray)
+			*scene*))
+	(best-intersection 
+	 (reduce 
+	  (lambda (best-int obj-int)
+	    (cond ((null obj-int) best-int)
+		  ;; small epsilon allows us to cull intersections in the
+		  ;; opposite direction of the vector
+		  ((< (intersect-time obj-int) 0.01) best-int)
+		  ((null best-int) obj-int)
+		  ((< (intersect-time obj-int)
+		      (intersect-time best-int)) obj-int)
+		  (t best-int))) 
+	  intersections :initial-value nil)))
+    best-intersection))
 
-(defun in-shadow (light-ray)
-  (let ((inters
-	 (find-intersection light-ray)))
-    (and inters (> (intersect-time inters) 0.01))))
+(defun calc-shadow-factor (light-ray)
+  (let ((inters (find-intersection light-ray)))
+    (if inters
+	(- 1 (transparency (material (intersect-object inters))))
+	1)))
 
 (defun get-ambient-component (ray mat inters)
   (vector-mult-scalar (color mat) (intensity *ambient-light*)))
@@ -74,12 +81,13 @@
 	 (ln-dot-prod (dot-product light-dir (normal inters)))
 	 (nh-dot-prod (dot-product (normal inters) half-dir))
 	 (diffuse-component (* (diffuse-factor mat) ln-dot-prod))
-	 (specular-component (* (specular-factor mat) (expt nh-dot-prod (specular-n mat)))))
-    (if (in-shadow light-ray)
-	*black*
-	(vector-add 
-	 (vector-mult-scalar (color mat) (intensity light) diffuse-component)
-	 (vector-mult-scalar *white* (intensity light) specular-component)))))
+	 (specular-component (* (specular-factor mat) (expt nh-dot-prod (specular-n mat))))
+	 (shadow-factor (calc-shadow-factor light-ray)))
+    (vector-mult-scalar 
+     (vector-add 
+      (vector-mult-scalar (color mat) (intensity light) diffuse-component)
+      (vector-mult-scalar *white* (intensity light) specular-component))
+     shadow-factor)))
 
 (defun calc-color (ray mat inters)
   (let ((ambient-component (get-ambient-component ray mat inters))
@@ -109,21 +117,19 @@
      :attenuation (* (attenuation ray) (reflectivity mat)))))
 
 (defun refract-ray (ray mat inters)
-  (let* ((mu (/ (refraction-index ray) (refraction-index mat)))
-	 (cos-theta-i (dot-product (normal inters) (look-direction ray)))
-	 (sin-theta-i (sqrt (- 1 (* cos-theta-i cos-theta-i))))
-	 (sin-theta-t (* mu sin-theta-i)))
-    (when (< (* sin-theta-t sin-theta-t) 1)
-      (let* ((cos-theta-t (sqrt (- 1 (* sin-theta-t sin-theta-t))))
-	     (transmitted (vector-sub (vector-mult-scalar (direction ray) mu)
-				      (vector-mult-scalar (normal inters) (* mu (+ cos-theta-i cos-theta-t))))))
-	
-	(make-instance
-	 'ray
-	 :origin (point inters)
-	 :direction transmitted
-	 :attenuation (* (attenuation ray) (transparency mat))
-	 :refraction-index (refraction-index mat))))))
+  (let* ((mu1 (refraction-index ray))
+	 (mu2 (if (eq (direction inters) 'entering) (refraction-index mat) 1.0))
+	 (mu (/ mu1 mu2))
+	 (c1 (- (dot-product (normal inters) (direction ray))))
+	 (c2 (sqrt (- 1 (* mu mu (- 1 (* c1 c1))))))
+	 (refract-dir (vector-add
+		       (vector-mult-scalar (direction ray) mu)
+		       (vector-mult-scalar (normal inters) (- (* mu c1) c2)))))
+    (make-instance
+     'ray
+     :origin (point inters)
+     :direction refract-dir
+     :attenuation (* (attenuation ray) (transparency mat)))))
 
 (defun shoot-ray (ray depth)
   (if (>= depth 0)
@@ -140,11 +146,11 @@
 			*black*))
 		   (global-refracted
 		    (if (> (transparency mat) 0)
-			(let ((refracted-ray (refract-ray ray mat inters)))
-			  (if refracted-ray
-			      (shoot-ray refracted-ray (- depth 1))
-			      *black*))
-			*black*)))
+		   	(let ((refracted-ray (refract-ray ray mat inters)))
+		   	  (if refracted-ray
+		   	      (shoot-ray refracted-ray (- depth 1))
+		   	      *black*))
+		   	*black*)))
 	      (vector-add local global-reflected global-refracted))
 	    *black*))
       *black*))
@@ -153,7 +159,7 @@
 (defun sample (view-point)
   (let* ((dir (calc-direction *eye* view-point) )
 	 (ray (make-instance 'ray :origin *eye* :direction dir :attenuation 1.0)))
-    (shoot-ray ray 2)))
+    (shoot-ray ray 3)))
 
 (defun supersample (view-points)
   (vector-avg

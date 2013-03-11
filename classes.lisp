@@ -54,7 +54,11 @@
     :reader normal)
    (intersect-object
     :initarg :intersect-object
-    :reader intersect-object)))
+    :reader intersect-object)
+   (direction
+    :initarg :direction
+    :reader direction
+    :initform 'entering)))
 
 (defclass light ()
   ((intensity

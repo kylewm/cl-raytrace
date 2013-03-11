@@ -4,6 +4,10 @@
     (lambda (&rest more-args)
       (apply function (append args more-args))))
 
+(defun flatmap (f-returning-list list)
+  (reduce #'append 
+	  (mapcar f-returning-list list)))
+
 (defun make-color (red green blue)
   (list red green blue))
 
